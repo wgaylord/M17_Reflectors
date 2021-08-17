@@ -1,0 +1,56 @@
+
+<script>
+
+
+
+function processStats(){ //Process new messages as they are fetched
+
+    messages =  JSON.parse(this.responseText);  //Decode the raw messages
+    document.getElementById("groups").innerHTML = ""
+    for (name in messages){
+    	
+    	var list = document.createElement('ul');
+
+	
+	messages[name].forEach(function (dat) {
+	var li = document.createElement('li');
+	li.textContent = dat[0];
+	
+	list.appendChild(li);
+        });
+        groupName = document.createElement("h4") 
+        if(name == ""){
+        groupName.textContent = "Not in a Group"
+        }else{
+        groupName.textContent = "Group: " +name.replace(" "," Module: ")
+        }
+        document.getElementById("groups").append(groupName)
+        document.getElementById("groups").append(list)
+    }
+
+}
+
+function fetchMessages(){ //Fetch messages
+    request = new XMLHttpRequest(); //Make a new request 
+    request.addEventListener("load",processStats) //Add a lsitener to handle the returned data
+    request.open("GET","/status") //Set request to be a GET request to /messages
+    request.send() //Actually send request
+}
+
+setInterval(fetchMessages,5000) //Request new messages every second
+
+
+
+
+</script>
+
+<body>
+	<h1>KD9KCK's Group base M17 Reflector</h1>
+	<p>This reflector groups conversations based around dst address instead of around modules.</p>
+	<p>To set what group you are in you have to transmit intially to allow the reflector to see your set dst address.</p> 
+	<h3>Active Groups</h3>
+	<p>Only groups that have a client attached will be displayed.</p>
+	<div id="groups">
+	
+	</div>
+</body>

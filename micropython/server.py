@@ -1,7 +1,8 @@
 import socket
 import sys
 import time
-
+import json
+import struct
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_address = ('0.0.0.0', 17000)
@@ -51,13 +52,17 @@ def handleUDP():
     elif magic == b"M17 ":
         address = data[12:18]
         module = clients[address]["module"]
-        for x in modules[module]:
-            sock.sendto(data,clients[x]["addr"])
-    elif magic == b"INFO":
-        print(clients)
-        print(modules)
+        if module == 69: #Module E on this reflector is a Parrot only send back to sender
+            sock.sendto(data,clients[address]["addr"])
+        else:
+            for x in modules[module]:
+                if(x != address): #Only send voice to others do back to sender
+                    sock.sendto(data,clients[x]["addr"])
+    elif magic == b"INFO": #Custom magic used by status page to get info from ESP32 reflector. This is still under development.
+        data = json.dumps(clients)
+        sock.sendto(data.encode("ASCII"),addr)
     else:
-        print(data.decode())
+        print(data.decode()) #If some odd magic shows up, log it out.
     
     
     
@@ -72,7 +77,16 @@ def handleUDP():
             if not clients[x]["pinged"]:
                 clients[x]["pinged"] = True
                 sock.sendto(b"PING"+x,clients[x]["addr"])
-   
+
+def decodeCallsign(x):
+    unpacked = struct.unpack(">HI",x)
+    q = (unpacked[0]<<(8*4))+unpacked[1]  
+    call = ""
+    while q > 0:
+        call += " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/."[q%40]
+        q = q //40
+    return call
+
 def run():
     init()   
     while True:

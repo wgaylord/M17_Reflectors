@@ -1,111 +1,100 @@
-import asyncio
+import socket
+import sys
+import time
+import json
 import struct
 
-import json
-
-clients = set()
-clientDests = {}
-talking = {b"\00\00\00\00\00\00":False}
-
-class DiscoveryProtocol(asyncio.DatagramProtocol):	
-    def __init__(self):
-        super().__init__()
-        self.pingging = True
-        self.pendingPong = False
-        self.loop = asyncio.get_event_loop()
-        self.address = (None,None,None)
-    def connection_made(self, transport):
-
-        self.transport = transport
-        
-        
-    def datagram_received(self, data, addr):
-       magic = data[0:4]
-       if magic == b"STAT":
-           data = ""
-           dests = {}
-           for x in clientDests.keys():
-               if clientDests[x] in  dests.keys():
-                   dests[decodeCallsign(clientDests[x])].append((decodeCallsign(x),talking[x]))
-               else:
-                   dests[decodeCallsign(clientDests[x])] = [(decodeCallsign(x),talking[x])]
-           data = json.dumps(dests)
-           self.transport.sendto(data.encode("ASCII"),addr)
-       if magic == b"CONN":
-           self.address = (addr,data[4:10],decodeCallsign(data[4:10]))
-           clientDests[self.address[1]] = b"\00\00\00\00\00\00"
-           talking[self.address[1]] = False
-           clients.add((addr,data[4:10],self.address[2]))
-           print(self.address[2],"Connected!")
-
-           self.transport.sendto(b"ACKN",addr)
-           self.transport.sendto(b"PING"+data[4:10],addr)
-           self.pinger = self.loop.create_task(self.handlePing())
-       if magic == b"DISC":
-           self.transport.sendto(b"DISC",addr)
-           clients.discard(self.address)
-           del clientDests[self.address[1]]
-           print(self.address[2],"Disconnected Gracefully.")
-           self.pingging = False
-       if magic == b"M17 ":
-           #print(talking)
-           #print("DST:",decodeCallsign(data[6:12]),"SRC:",decodeCallsign(data[12:18]))
-           clientDests[data[12:18]] = data[6:12]
-           talking[data[12:18]]=True
-           for x in clients:
-               if not x == self.address:
-                   if clientDests[x[1]] == data[6:12]:
-                       self.transport.sendto(data,x[0])
-       if magic == b"PONG":
-           #print("PONG")
-           self.pendingPong=False
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+server_address = ('0.0.0.0', 17000)
 
 
-    async def handlePing(self):
-        global talking
-        while self.pingging:
-            #print(self.pendingPong)
-            if self.pendingPong:
-                #self.transport.sendto(b"DISC",addr)
-                clients.discard(self.address)
-                del clientDests[self.address[1]]
-                print(self.address[2],"Ping Timeout")
+timeout = 60
+pingTime = 10
 
-                self.pingging = False
-            else:
-                #print(talking,talking[self.address[1]])
-                if talking[self.address[1]]:
-                	talking[self.address[1]] = False
-                self.transport.sendto(b"PING"+self.address[1],self.address[0])
-                self.pendingPong = True
-                await asyncio.sleep(10)
+modules = {}
+clients = {}
+
+def init():
+    sock.bind(server_address)
+    for x in range(65,91):
+        modules[x] = set()
+
+
+
+    
+def handleUDP():
+
+    data, addr = sock.recvfrom(56)
+
+    now = time.time()
+    magic = data[0:4]
+    if magic == b"CONN":
+        address = data[4:10]
+#        print("CONN ",decode_callsign_base40(address))
+        module = data[10]
+        modules[module].add(address)
+        clients[address] = {}
+        clients[address]["module"] = module
+        clients[address]["pingTime"] = time.time()
+        clients[address]["pinged"] = False
+        clients[address]["addr"] = addr
+        clients[address]["talking"] = False
+        sock.sendto(b"ACKN",addr)
+    elif magic == b"PONG":
+        address = data[4:10]
+        if clients[address]["pinged"]: #Only care about a pong if we send a PING, work around for "dumb" clients that blindly PONG
+#            print("PONG ",decode_callsign_base40(address))
+            clients[address]["pingTime"] = time.time()
+            clients[address]["pinged"] = False
+            clients[address]["talking"] = False
+            
+    elif magic == b"DISC":
+        address = data[4:10]
+#        print("DISC ",decode_callsign_base40(address))
+        module = clients[address]["module"]
+        modules[module].discard(address)
+        del clients[address]
+        sock.sendto(b"DISC",addr)
+    elif magic == b"M17 ":
+        address = data[12:18]
+        module = clients[address]["module"]
+        clients[address]["talking"] = True
+        if module == 69:
+            sock.sendto(data,clients[address]["addr"])
+        else:
+            for x in modules[module]:
+                if(x != address):
+                    sock.sendto(data,clients[x]["addr"])
+    elif magic == b"INFO":
+        temp = {}
+        for x in clients.keys():
+            temp[decode_callsign_base40(x)] = {}
+            temp[decode_callsign_base40(x)]["module"] = chr(clients[x]["module"])
+            temp[decode_callsign_base40(x)]["talking"] = clients[x]["talking"]
+           
+        data = json.dumps(temp)
+        sock.sendto(data.encode("ASCII"),addr)
+    else:
+        print(data.decode())
+    
+    
+    
+    for x in clients.keys():
+        #print("Checking Ping Time!",decode_callsign_base40(x),clients[x]["pingTime"],now-clients[x]["pingTime"])
+        if now - clients[x]["pingTime"]  > timeout:
+#            print("TIMEOUT ",x)
+            sock.sendto(b"DISC"+x,clients[x]["addr"])
+            module = clients[x]["module"]
+            modules[module].discard(x)
+            del clients[x]
+        elif now - clients[x]["pingTime"] > pingTime:
+            if not clients[x]["pinged"]:
+#               print("PINGING!",decode_callsign_base40(x))
+                clients[x]["pinged"] = True
+                sock.sendto(b"PING"+x,clients[x]["addr"])
                 
-            
-async def displayInfo():
-    while True:
-        dests = {}
-        for x in clientDests.keys():
-            if clientDests[x] in  dests.keys():
-                dests[clientDests[x]].append(x)
-            else:
-                dests[clientDests[x]] = [x]
-            print("Connected clients and Dests")
-            for x in dests.keys():
-                print("  ",decodeCallsign(x))
-                for y in dests[x]:
-                    print('    ',decodeCallsign(y),talking[y])
-        await asyncio.sleep(60)          
-            
-def start_discovery():
-    loop = asyncio.get_event_loop()
-    t = loop.create_datagram_endpoint(DiscoveryProtocol,local_addr=('0.0.0.0',17000))
-    loop.run_until_complete(t)
-    loop.create_task(displayInfo())
-    loop.run_forever()
-    
-    
-def decodeCallsign(x):
-    unpacked = struct.unpack(">HI",x)
+def decode_callsign_base40(encoded_bytes):
+    unpacked = struct.unpack(">HI",encoded_bytes)
     q = (unpacked[0]<<(8*4))+unpacked[1]  
     call = ""
     while q > 0:
@@ -113,4 +102,8 @@ def decodeCallsign(x):
         q = q //40
     return call
 
-start_discovery()
+def run():
+    init() 
+    while True:
+        handleUDP()
+        

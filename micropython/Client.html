@@ -1,0 +1,47 @@
+
+<script>
+
+
+
+function processStats(){ //Process new messages as they are fetched
+
+    messages =  JSON.parse(this.responseText);  //Decode the raw messages
+    document.getElementById("groups").innerHTML = ""
+    var list = document.createElement('ul');
+    console.log(messages)
+    for (name in messages){
+	var li = document.createElement('li');
+	li.textContent = name + " -> "+messages[name]["module"];
+    if(messages[name]["talking"]){
+        li.textContent = li.textContent + " Talking..";
+    }
+	list.appendChild(li);
+    };
+    document.getElementById("groups").append(list);
+
+}
+
+function fetchMessages(){ //Fetch messages
+    request = new XMLHttpRequest(); //Make a new request 
+    request.addEventListener("load",processStats) //Add a lsitener to handle the returned data
+    request.open("GET","/status") //Set request to be a GET request to /messages
+    request.send() //Actually send request
+}
+
+setInterval(fetchMessages,2000); //Request new messages every second
+
+
+
+
+</script>
+
+<body>
+	<h1>KD9KCK's ESP32 M17 Reflector</h1>
+	<p>This reflector is running on an ESP32 using python via Micropython.</p>
+	<p>The website is running on my main server due to micropython not allowing use of both cores.</p> 
+	<h3>Active Clients</h3>
+	<p>Currently the list is not sorted nor is it seperated by module. That will happend in a future update.</p>
+	<div id="groups">
+	
+	</div>
+</body>
